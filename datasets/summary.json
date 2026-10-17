@@ -1,0 +1,14 @@
+{
+  "lifeguard.bridge.noul.train": 586,
+  "lifeguard.bridge.noul.val": 14,
+  "lifeguard.developer.noul.train": 7056,
+  "lifeguard.developer.noul.val": 144,
+  "lifeguard.empty.noul.train": 3528,
+  "lifeguard.empty.noul.val": 72,
+  "lifeguard.robot.noul.train": 6888,
+  "lifeguard.robot.noul.val": 108,
+  "lifeguard.server.noul.train": 14028,
+  "lifeguard.server.noul.val": 372,
+  "lifeguard.switch.noul.train": 6828,
+  "lifeguard.switch.noul.val": 96
+}
