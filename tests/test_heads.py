@@ -66,3 +66,25 @@ def test_when2call_gate():
     )
     assert res["decision"] == When2CallGate.STATE_CALL
     assert not res["executable"]
+
+
+def test_canonical_binary_head():
+    from lifeguard.heads import CanonicalBinaryHead
+    head = CanonicalBinaryHead(in_features=32, hidden_dim=16, tau_abstain=0.2)
+
+    x_a = torch.randn(8, 32)
+    x_b = torch.randn(8, 32)
+
+    p_a, p_b, z, abstain_mask = head(x_a, x_b)
+
+    # 1. Structural complement identity: P(A) + P(B) === 1.0
+    assert torch.allclose(p_a + p_b, torch.ones_like(p_a), atol=1e-6)
+
+    # 2. Difference logit matches z = U(A) - U(B)
+    u_a = head.utility_scorer(x_a).squeeze(-1)
+    u_b = head.utility_scorer(x_b).squeeze(-1)
+    assert torch.allclose(z, u_a - u_b, atol=1e-5)
+
+    # 3. Abstention flags low confidence instances
+    low_conf = torch.abs(2.0 * p_a - 1.0) < 0.2
+    assert torch.equal(abstain_mask, low_conf)

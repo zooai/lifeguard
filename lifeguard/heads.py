@@ -143,3 +143,61 @@ class When2CallGate:
             "reason": f"Confidence ({confidence:.2f}) below autonomous execution threshold ({threshold:.2f}).",
             "executable": False,
         }
+
+
+class CanonicalBinaryHead(nn.Module):
+    r"""Native Binary Decision Head for verified mutually exclusive action pairs.
+
+    Derives decision probabilities from the canonical utility difference logit:
+        z(x) = U_\theta(\text{action}_A \mid x) - U_\theta(\text{action}_B \mid x)
+        P(\text{action}_A) = \sigma(z / T)
+        P(\text{action}_B) = \sigma(-z / T) = 1.0 - P(\text{action}_A)
+
+    Essential Safeguard:
+        Requires semantic verification that action_A and action_B are mutually exclusive
+        and exhaustive within identical context x. Does not blindly flip string negations.
+
+    Includes explicit epistemic uncertainty / abstention estimation:
+        confidence = |2 * P(action_A) - 1.0|
+        abstain = confidence < tau_abstain
+        (distinguishing between endorsing action_B vs abstaining due to insufficient evidence).
+    """
+
+    def __init__(self, in_features: int, hidden_dim: int = 128, tau_abstain: float = 0.15):
+        super().__init__()
+        self.utility_scorer = nn.Sequential(
+            nn.Linear(in_features, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, 1),
+        )
+        self.temperature = nn.Parameter(torch.tensor([1.0]))
+        self.tau_abstain = tau_abstain
+
+    def forward(
+        self,
+        embed_context_a: torch.Tensor,
+        embed_context_b: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute verified binary choice probabilities and abstention mask.
+
+        Args:
+            embed_context_a: Representation of state x conditioned on action A [B, D]
+            embed_context_b: Representation of state x conditioned on action B [B, D]
+
+        Returns:
+            p_a: Probability of action A (shape: [B])
+            p_b: Probability of action B (shape: [B], identically 1 - p_a)
+            logit_diff: Canonical utility difference logit z(x) = U(A|x) - U(B|x)
+            abstain_mask: Boolean tensor where True indicates insufficient evidence / abstention
+        """
+        u_a = self.utility_scorer(embed_context_a).squeeze(-1)
+        u_b = self.utility_scorer(embed_context_b).squeeze(-1)
+
+        z = (u_a - u_b) / torch.clamp(self.temperature, min=1e-3)
+        p_a = torch.sigmoid(z)
+        p_b = 1.0 - p_a
+
+        confidence = torch.abs(2.0 * p_a - 1.0)
+        abstain_mask = confidence < self.tau_abstain
+
+        return p_a, p_b, z, abstain_mask
