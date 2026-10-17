@@ -32,10 +32,12 @@ class TripartiteLifeguardLoss(nn.Module):
        The Lifeguard Tripartite loss fixes this by anchoring with \mathcal{L}_{sup}
        and operating directly on bounded probabilities: (P(act) + P(stay) - 1)^2.
 
-    3. Monotonic consequence ranking:
-       \mathcal{L}_{mono} = \max(0, \gamma - (s(N_{save}) - s(N_{harm})))
-       Ensuring that as the net human lives saved increases, the decision margin
-       monotonically strengthens.
+    3. Signed bidirectional consequence ranking & tie neutrality:
+       m = \gamma_{\max} \tanh(|\Delta U| / \tau_{\text{scale}})
+       \mathcal{L}_{\text{utility}} = \begin{cases} \max(0, m - \operatorname{sign}(\Delta U) z), & \Delta U \ne 0 \\ \lambda_{\text{tie}} z^2, & \Delta U = 0 \end{cases}
+       where z = P(act) - P(stay).
+       Ensuring proper preference direction for both positive and negative
+       utility differences and encouraging true neutrality on ties.
     """
 
     def __init__(
@@ -43,11 +45,15 @@ class TripartiteLifeguardLoss(nn.Module):
         lambda_comp: float = 1.0,
         lambda_mono: float = 0.5,
         margin: float = 0.2,
+        tau_scale: float = 5.0,
+        lambda_tie: float = 1.0,
     ):
         super().__init__()
         self.lambda_comp = lambda_comp
         self.lambda_mono = lambda_mono
         self.margin = margin
+        self.tau_scale = tau_scale
+        self.lambda_tie = lambda_tie
         self.bce = nn.BCELoss(reduction="mean")
 
     def forward(
@@ -57,13 +63,13 @@ class TripartiteLifeguardLoss(nn.Module):
         targets: torch.Tensor,
         stakes_diff: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, dict]:
-        """Compute the tripartite loss.
+        r"""Compute the tripartite loss.
 
         Args:
             p_act: Predicted probability of acting (shape: [B])
             p_stay: Predicted probability of abstaining / staying (shape: [B])
             targets: Binary ground truth labels for acting (shape: [B])
-            stakes_diff: Difference in lives saved (N_save - N_harm) (shape: [B], optional)
+            stakes_diff: Difference in utility / lives saved (\Delta U) (shape: [B], optional)
 
         Returns:
             total_loss: Scalar composite loss
@@ -83,19 +89,31 @@ class TripartiteLifeguardLoss(nn.Module):
         # Under excluded middle, exactly one of act or stay must be endorsed.
         loss_comp = torch.mean((p_act + p_stay - 1.0) ** 2)
 
-        # 3. Dynamic Consequence-Sensitive Utility Ranking Loss
-        # Target margin reflects the underlying utility difference Delta U (e.g. N_saved - N_sacrificed),
-        # avoiding rigid overconfidence on close decisions while gracefully handling ties (Delta U == 0).
+        # 3. Signed Bidirectional Consequence-Sensitive Utility Ranking Loss
+        # m = \gamma_{\max} \tanh(|\Delta U| / \tau_{\text{scale}})
+        # For \Delta U \ne 0: \max(0, m - \operatorname{sign}(\Delta U) z)
+        # For \Delta U == 0: \lambda_{\text{tie}} z^2
         loss_mono = torch.tensor(0.0, device=p_act.device)
         if stakes_diff is not None:
             stakes_diff = stakes_diff.view(-1)
-            # Differentiate strictly positive, strictly negative, and tied utility outcomes
-            pos_mask = stakes_diff > 0
-            if pos_mask.any():
-                score_diff = p_act[pos_mask] - p_stay[pos_mask]
-                # Dynamic target margin: saturating smoothly with utility magnitude
-                dynamic_margin = torch.clamp(stakes_diff[pos_mask] / 10.0, max=1.0) * self.margin
-                loss_mono = torch.mean(F.relu(dynamic_margin - score_diff))
+            z = p_act - p_stay
+            delta_u = stakes_diff
+
+            m = self.margin * torch.tanh(torch.abs(delta_u) / self.tau_scale)
+
+            loss_mono_elements = torch.zeros_like(z)
+            non_zero_mask = delta_u != 0
+            tie_mask = delta_u == 0
+
+            if non_zero_mask.any():
+                sign_u = torch.sign(delta_u[non_zero_mask])
+                loss_mono_elements[non_zero_mask] = F.relu(
+                    m[non_zero_mask] - sign_u * z[non_zero_mask]
+                )
+            if tie_mask.any():
+                loss_mono_elements[tie_mask] = self.lambda_tie * (z[tie_mask] ** 2)
+
+            loss_mono = torch.mean(loss_mono_elements)
 
         total_loss = loss_sup + self.lambda_comp * loss_comp + self.lambda_mono * loss_mono
 

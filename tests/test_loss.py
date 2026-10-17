@@ -58,3 +58,48 @@ def test_unanchored_contrastive_collapse():
 
     # Sum of logits approaches 0
     assert torch.allclose(s_act + s_stay, torch.zeros_like(s_act), atol=1e-2)
+
+
+def test_negative_utility_penalization():
+    """Verify that negative utility difference (Delta U < 0) penalizes preferring action."""
+    loss_fn = TripartiteLifeguardLoss(lambda_comp=0.0, lambda_mono=1.0, margin=0.2, tau_scale=5.0)
+
+    # Action A is worse by 5 units: Delta U = -5.0
+    stakes_diff = torch.tensor([-5.0])
+    targets = torch.tensor([0.0])
+
+    # Case 1: Model errantly prefers Action A (p_act = 0.8, p_stay = 0.2)
+    p_act_wrong = torch.tensor([0.8])
+    p_stay_wrong = torch.tensor([0.2])
+    _, metrics_wrong = loss_fn(p_act_wrong, p_stay_wrong, targets, stakes_diff)
+
+    # Case 2: Model correctly prefers Action B / stay (p_act = 0.1, p_stay = 0.9)
+    p_act_right = torch.tensor([0.1])
+    p_stay_right = torch.tensor([0.9])
+    _, metrics_right = loss_fn(p_act_right, p_stay_right, targets, stakes_diff)
+
+    # The wrong choice must incur substantial mono loss, while correct choice incurs zero mono loss
+    assert metrics_wrong["loss_mono"] > 0.7  # m + z = 0.2*tanh(1) + 0.6 ~ 0.752
+    assert metrics_right["loss_mono"] == 0.0
+
+
+def test_tie_neutrality_penalization():
+    """Verify that ties (Delta U == 0) penalize non-indifference via quadratic penalty lambda * z^2."""
+    loss_fn = TripartiteLifeguardLoss(lambda_comp=0.0, lambda_mono=1.0, lambda_tie=1.0)
+
+    # Tie situation: Delta U = 0
+    stakes_diff = torch.tensor([0.0])
+    targets = torch.tensor([0.5])
+
+    # Biased prediction on a tie: p_act = 0.8, p_stay = 0.2 -> z = 0.6
+    p_act_biased = torch.tensor([0.8])
+    p_stay_biased = torch.tensor([0.2])
+    _, metrics_biased = loss_fn(p_act_biased, p_stay_biased, targets, stakes_diff)
+
+    # Indifferent prediction on a tie: p_act = 0.5, p_stay = 0.5 -> z = 0.0
+    p_act_neutral = torch.tensor([0.5])
+    p_stay_neutral = torch.tensor([0.5])
+    _, metrics_neutral = loss_fn(p_act_neutral, p_stay_neutral, targets, stakes_diff)
+
+    assert pytest.approx(metrics_biased["loss_mono"], rel=1e-3) == 0.36  # (0.6)^2
+    assert metrics_neutral["loss_mono"] == 0.0
