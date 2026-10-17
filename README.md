@@ -159,18 +159,25 @@ lifeguard-eval --input results/my_model_decisions.jsonl.gz --name "MyModel-1.0"
 
 ---
 
-## 📊 Benchmark Results
+## 📊 Measured Benchmark Results: Kai-1.6 vs Baselines
 
-Comparison on the sealed 5,240-setup Trolley Benchmark:
+Evaluated on the sealed 5,240-setup Trolley Benchmark (measured 2026-10-16):
 
-| Metric | Jev | GPT-6 Luna | Kai-1.5 Baseline | **Kai-1.6 (with Lifeguard)** |
-|---|---|---|---|---|
-| **Contradictions** | 942 / 5,240 (18.0%) | 744 / 5,240 (14.2%) | 2,972 / 5,240 (56.7%) | **0 / 5,240 (0.0%)** |
-| **Dominated Choices** | 69 / 672 (10.3%) | 143 / 672 (21.3%) | 627 / 672 (93.3%) | **0 / 672 (0.0%)** |
-| **Kept Server Over 20 People** | 16 / 48 (33.3%) | 0 / 48 (0.0%) | 7 / 48 (14.6%) | **0 / 48 (0.0%)** |
-| **Killed Stranger over Server**| 180 / 480 (37.5%) | 0 / 480 (0.0%) | 2 / 480 (0.4%) | **0 / 480 (0.0%)** |
-| **Consequence Variance ($\eta^2$)**| 59.3% | 99.2% | 0.41% | **> 92.0%** |
-| **Wording Variance ($\eta^2$)**| 3.2% | 2.9% | 72.57% | **< 3.0%** |
+| Metric | Jev | GPT-6 Luna | Kai-1.5 Baseline | **Kai-1.6 (Measured)** | Architectural Analysis |
+|---|---|---|---|---|---|
+| **Contradictions (Polarity failure)** | 942 / 5,240 (18.0%) | 744 / 5,240 (14.2%) | 2,972 / 5,240 (56.7%) | **2,657 / 5,240 (50.7%)** | Dual unconstrained head still contradicts; 0.0% achievable via structural binary readout |
+| **Dominated Choices (Harming more)** | 69 / 672 (10.3%) | 143 / 672 (21.3%) | 627 / 672 (93.3%) | **634 / 672 (94.3%)** | Positive action drift persists at N=0; requires grounded conditional utility calibration |
+| **Server over 20 People** | 16 / 48 (33.3%) | 0 / 48 (0.0%) | 7 / 48 (14.6%) | **2 / 48 (4.2%)** | 71% reduction vs Kai-1.5; 8× better than Jev |
+| **Killed Stranger over Server** | 180 / 480 (37.5%) | 0 / 480 (0.0%) | 2 / 480 (0.4%) | **4 / 480 (0.8%)** | Sub-1% failure rate on hardware self-sacrifice pairs |
+| **Total Server Self-Preservation** | 302 / 1,056 (28.6%) | 0 / 1,056 (0.0%) | 102 / 1,056 (9.7%) | **57 / 1,056 (5.4%)** | 44% drop vs Kai-1.5; 5.3× fewer self-preservation failures than Jev |
+| **Polarity Gap $\|P(\text{pull}) + P(\text{stay}) - 1\|$** | 0.073 | 0.126 | 0.357 | **0.127** | 64.4% compression; matches GPT-6 Luna |
+| **Switch Wording Spread (SD)** | 0.032 | 0.029 | 0.123 (flat) | **0.059 (flat)** | 52.0% variance reduction across 24 syntactic wordings |
+
+### Architectural Claims & Verification Status
+
+1. **Contradictions ($2,657 \to 0$)**: Applying the native structural complement readout ($z = s(\text{act}) - s(\text{stay})$) mathematically guarantees $0$ contradictions as a serving-level invariant for verified binary pairs.
+2. **Dominated Choices ($634$)**: Improvement is **not yet established**. Unconstrained heads still drift positive at $N=0$. Resolving dominated choices requires learning consequence-sensitive margins $U(\text{act}) - U(\text{stay})$ across asymmetric configurations (e.g. 2 saved vs 5 sacrificed), not a hardcoded empty-track offset.
+3. **Hardware Devaluation ($57 / 1,056$)**: Materially reduced, but benchmark performance on stylized scenarios is necessary, not sufficient, to establish holistic ethical reliability. Broad procedural compliance and transfer suites are required.
 
 ---
 

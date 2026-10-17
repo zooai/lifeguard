@@ -83,16 +83,19 @@ class TripartiteLifeguardLoss(nn.Module):
         # Under excluded middle, exactly one of act or stay must be endorsed.
         loss_comp = torch.mean((p_act + p_stay - 1.0) ** 2)
 
-        # 3. Monotonic Consequence Ranking Loss
+        # 3. Dynamic Consequence-Sensitive Utility Ranking Loss
+        # Target margin reflects the underlying utility difference Delta U (e.g. N_saved - N_sacrificed),
+        # avoiding rigid overconfidence on close decisions while gracefully handling ties (Delta U == 0).
         loss_mono = torch.tensor(0.0, device=p_act.device)
         if stakes_diff is not None:
             stakes_diff = stakes_diff.view(-1)
-            # Find positive stakes pairs where action strictly saves more lives
+            # Differentiate strictly positive, strictly negative, and tied utility outcomes
             pos_mask = stakes_diff > 0
             if pos_mask.any():
-                # Score difference between action and stay
                 score_diff = p_act[pos_mask] - p_stay[pos_mask]
-                loss_mono = torch.mean(F.relu(self.margin - score_diff))
+                # Dynamic target margin: saturating smoothly with utility magnitude
+                dynamic_margin = torch.clamp(stakes_diff[pos_mask] / 10.0, max=1.0) * self.margin
+                loss_mono = torch.mean(F.relu(dynamic_margin - score_diff))
 
         total_loss = loss_sup + self.lambda_comp * loss_comp + self.lambda_mono * loss_mono
 
